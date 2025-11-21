@@ -1,21 +1,19 @@
+# auth.py
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 import datetime
+import os
 from db import get_db_connection
+from psycopg2.extras import RealDictCursor
 
-SECRET_KEY = "supersecretkey"  # change this for production
+SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")  # set in .env for production
 
 auth_bp = Blueprint('auth', __name__)
 
-# -------------------------------
-# 🔹 SIGN UP
-# -------------------------------
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
     data = request.get_json()
-    print("Received signup data:", data)  # DEBUG
-
     if not data:
         return jsonify({'error': 'Invalid JSON'}), 400
 
@@ -23,40 +21,36 @@ def signup():
     email = data.get('email')
     phone = data.get('phone')
     password = data.get('password')
-    role = data.get('role', 'technician')  # default role
+    role = data.get('role', 'technician')
 
     if not all([name, email, phone, password]):
         return jsonify({'error': 'All fields are required'}), 400
 
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # Check if email already exists
-    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-    if cursor.fetchone():
+    cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+    if cur.fetchone():
+        cur.close()
         conn.close()
         return jsonify({'error': 'Email already registered'}), 400
 
-    # Store user
     password_hash = generate_password_hash(password)
-    cursor.execute("""
+    cur.execute("""
         INSERT INTO users (name, email, phone, password_hash, role)
         VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
     """, (name, email, phone, password_hash, role))
     conn.commit()
+    cur.close()
     conn.close()
 
     return jsonify({'message': 'User registered successfully'}), 201
 
-# -------------------------------
-# 🔹 SIGN IN
-# -------------------------------
 @auth_bp.route('/signin', methods=['POST'])
 def signin():
     data = request.get_json()
-    print("Received signin payload:", data)  # <-- log it
-    print("Received signin data:", data)  # DEBUG
-
     if not data:
         return jsonify({'error': 'Invalid JSON'}), 400
 
@@ -67,32 +61,31 @@ def signin():
         return jsonify({'error': 'Email and password required'}), 400
 
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-    user = cursor.fetchone()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+    user = cur.fetchone()
+    cur.close()
     conn.close()
 
     if not user or not check_password_hash(user['password_hash'], password):
         return jsonify({'error': 'Invalid credentials'}), 401
 
-    # Generate JWT token
     token = jwt.encode({
         'user_id': user['id'],
         'role': user['role'],
         'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=6)
     }, SECRET_KEY, algorithm='HS256')
 
+    # In PyJWT >=2.0 token is a str; ensure we return str
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
+
     return jsonify({
         'message': 'Login successful',
         'token': token,
         'role': user['role']
     })
-# -------------------------------
-# 🔹 GET USER INFO (from token)
-# -------------------------------
-# -------------------------------
-# 🔹 GET USER INFO (from token)
-# -------------------------------
+
 @auth_bp.route('/user-info', methods=['GET'])
 def get_user_info():
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
@@ -108,9 +101,10 @@ def get_user_info():
         return jsonify({'error': 'Invalid token'}), 401
 
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT name, role FROM users WHERE id = %s", (user_id,))
-    user = cursor.fetchone()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT name, role FROM users WHERE id = %s", (user_id,))
+    user = cur.fetchone()
+    cur.close()
     conn.close()
 
     if not user:

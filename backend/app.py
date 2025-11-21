@@ -1,3 +1,4 @@
+# app.py
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 from auth import auth_bp
@@ -6,50 +7,44 @@ from iot_routes import iot_bp
 import datetime
 import io
 import csv
+import os
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
-# ✅ CORS for frontend (React/Vite/Other Dev Servers)
 CORS(app, resources={r"/api/*": {"origins": [
-    "http://localhost:5173",  # Vite default
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:8080",  # Vue/React alt
+    "http://localhost:8080",
     "http://127.0.0.1:8080"
 ]}}, supports_credentials=True)
 
-# ✅ Register authentication routes
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(iot_bp)
 
-
-# =====================================================================
-# 🏗 API ROUTES
-# =====================================================================
-
 @app.route('/api/poles', methods=['GET'])
 def get_poles():
-    """Fetch all poles from DB"""
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    cursor.execute("""
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
         SELECT 
             pole_id, cluster_id, latitude, longitude,
             status, communication_status, state, district,
             city_or_village, mode, firmware_version, update_time
         FROM poles
     """)
-    data = cursor.fetchall()
+    data = cur.fetchall()
+    cur.close()
     conn.close()
 
     now = datetime.datetime.utcnow()
     for row in data:
-        if row['update_time']:
+        if row.get('update_time'):
             row['update_time'] = row['update_time'].isoformat()
 
         display_status = row.get('communication_status', 'OFFLINE')
 
-        if row['communication_status'] == 'OFFLINE' and row['update_time']:
+        if row['communication_status'] == 'OFFLINE' and row.get('update_time'):
             update_time = datetime.datetime.fromisoformat(row['update_time'])
             diff_days = (now - update_time).days
             display_status = 'MAINTENANCE' if diff_days < 3 else 'OFFLINE'
@@ -63,11 +58,10 @@ def get_poles():
 
 @app.route('/api/poles/<pole_id>', methods=['GET'])
 def get_pole_details(pole_id):
-    """Fetch a single pole’s details"""
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cursor.execute("""
+    cur.execute("""
         SELECT 
             pole_id, cluster_id, latitude, longitude,
             status AS device_status, communication_status,
@@ -76,8 +70,8 @@ def get_pole_details(pole_id):
         FROM poles
         WHERE pole_id = %s
     """, (pole_id,))
-
-    data = cursor.fetchone()
+    data = cur.fetchone()
+    cur.close()
     conn.close()
 
     if not data:
@@ -102,25 +96,24 @@ def get_pole_details(pole_id):
 
 @app.route('/api/telemetry', methods=['GET'])
 def get_telemetry():
-    """Fetch telemetry data"""
     pole_id = request.args.get('pole_id')
     mode = request.args.get('mode', 'filtered')
 
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     if pole_id:
         if mode == 'filtered':
-            cursor.execute("""
+            cur.execute("""
                 SELECT pole_id, status, signal_strength, timestamp
                 FROM telemetry_data
                 WHERE pole_id = %s
-                  AND (TIME(timestamp) BETWEEN '06:30:00' AND '07:00:00'
-                       OR TIME(timestamp) BETWEEN '18:00:00' AND '18:30:00')
+                  AND (timestamp::time BETWEEN '06:30' AND '07:00'
+                       OR timestamp::time BETWEEN '18:00' AND '18:30')
                 ORDER BY timestamp DESC
             """, (pole_id,))
         else:
-            cursor.execute("""
+            cur.execute("""
                 SELECT pole_id, status, signal_strength, timestamp
                 FROM telemetry_data
                 WHERE pole_id = %s
@@ -128,19 +121,20 @@ def get_telemetry():
                 LIMIT 24
             """, (pole_id,))
     else:
-        cursor.execute("""
+        cur.execute("""
             SELECT pole_id, status, signal_strength, timestamp
             FROM telemetry_data
-            WHERE (TIME(timestamp) BETWEEN '06:30:00' AND '07:00:00')
-               OR (TIME(timestamp) BETWEEN '18:00:00' AND '18:30:00')
+            WHERE (timestamp::time BETWEEN '06:30' AND '07:00')
+               OR (timestamp::time BETWEEN '18:00' AND '18:30')
             ORDER BY timestamp DESC
         """)
 
-    data = cursor.fetchall()
+    data = cur.fetchall()
+    cur.close()
     conn.close()
 
     for row in data:
-        if row['timestamp']:
+        if row.get('timestamp'):
             row['timestamp'] = row['timestamp'].isoformat()
 
     return jsonify(data)
@@ -148,11 +142,10 @@ def get_telemetry():
 
 @app.route('/api/alerts', methods=['GET'])
 def get_alerts():
-    """Fetch recent alerts"""
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cursor.execute("""
+    cur.execute("""
         SELECT pole_id, message, severity, alert_status,
                alert_type, technician_id, action_taken,
                remarks, timestamp
@@ -161,11 +154,12 @@ def get_alerts():
         LIMIT 10
     """)
 
-    data = cursor.fetchall()
+    data = cur.fetchall()
+    cur.close()
     conn.close()
 
     for row in data:
-        if row['timestamp']:
+        if row.get('timestamp'):
             row['timestamp'] = row['timestamp'].isoformat()
 
     return jsonify(data)
@@ -173,22 +167,22 @@ def get_alerts():
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
-    """Dashboard summary"""
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cursor.execute("SELECT COUNT(*) AS total FROM poles")
-    total = cursor.fetchone().get('total', 0)
+    cur.execute("SELECT COUNT(*)::int AS total FROM poles")
+    total = cur.fetchone().get('total', 0)
 
-    cursor.execute("SELECT COUNT(*) AS active FROM poles WHERE status='ON'")
-    active = cursor.fetchone().get('active', 0)
+    cur.execute("SELECT COUNT(*)::int AS active FROM poles WHERE status='ON'")
+    active = cur.fetchone().get('active', 0)
 
-    cursor.execute("SELECT COUNT(*) AS inactive FROM poles WHERE status='OFF'")
-    inactive = cursor.fetchone().get('inactive', 0)
+    cur.execute("SELECT COUNT(*)::int AS inactive FROM poles WHERE status='OFF'")
+    inactive = cur.fetchone().get('inactive', 0)
 
-    cursor.execute("SELECT COUNT(*) AS alerts FROM alerts WHERE alert_status='ACTIVE'")
-    alerts = cursor.fetchone().get('alerts', 0)
+    cur.execute("SELECT COUNT(*)::int AS alerts FROM alerts WHERE alert_status='ACTIVE'")
+    alerts = cur.fetchone().get('alerts', 0)
 
+    cur.close()
     conn.close()
     return jsonify({
         "total": total,
@@ -200,7 +194,6 @@ def get_stats():
 
 @app.route('/api/export/<table_name>', methods=['GET'])
 def export_csv(table_name):
-    """Export table to CSV"""
     valid_tables = {
         'telemetry': 'telemetry_data',
         'alerts': 'alerts',
@@ -214,7 +207,7 @@ def export_csv(table_name):
     end_date = request.args.get('end')
 
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     query = f"SELECT * FROM {valid_tables[table_name]}"
     params = []
@@ -223,12 +216,12 @@ def export_csv(table_name):
         query += " WHERE timestamp BETWEEN %s AND %s"
         params = [start_date, end_date]
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
 
     output = io.StringIO()
-
     if rows:
         writer = csv.DictWriter(output, fieldnames=rows[0].keys())
         writer.writeheader()
@@ -240,9 +233,19 @@ def export_csv(table_name):
     response.headers['Content-Disposition'] = f'attachment; filename={table_name}_export.csv'
     return response
 
+@app.route("/test-db")
+def test_db():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT NOW();")
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Connected to Supabase!", "time": str(result[0])}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
-# =====================================================================
-# 🚀 RUN APP
-# =====================================================================
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=int(os.getenv("PORT", 5000)))
