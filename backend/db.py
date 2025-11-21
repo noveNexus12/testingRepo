@@ -11,7 +11,7 @@ load_dotenv()  # Load .env file
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("SUPABASE_HOST"),
-        port="5432",
+        port="6543",
         database="postgres",
         user=os.getenv("SUPABASE_USER"),
         password=os.getenv("SUPABASE_PASSWORD")
