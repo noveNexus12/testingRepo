@@ -5,14 +5,13 @@ from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from dotenv import load_dotenv
 
-load_dotenv()  # Load .env file
-
+load_dotenv()
 
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("SUPABASE_HOST"),
-        port="6543",
-        database="postgres",
+        port=os.getenv("SUPABASE_PORT"),   # <-- Correct port
+        database=os.getenv("SUPABASE_DB"),
         user=os.getenv("SUPABASE_USER"),
         password=os.getenv("SUPABASE_PASSWORD")
     )
@@ -24,8 +23,5 @@ def get_cursor():
         cur = conn.cursor(cursor_factory=RealDictCursor)
         yield conn, cur
     finally:
-        try:
-            cur.close()
-        except:
-            pass
+        cur.close()
         conn.close()
