@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, Zap, AlertTriangle, Power, User } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiService } from "@/services/api.service";
-
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 interface Stats {
   total: number;
   active: number;
@@ -41,7 +41,7 @@ export default function Dashboard() {
         return;
       }
 
-      const res = await fetch("http://127.0.0.1:5000/api/auth/user-info", {
+      const res = await fetch(`${API_BASE_URL}/auth/user-info`, {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
