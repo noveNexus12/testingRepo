@@ -41,7 +41,7 @@ export default function Dashboard() {
         return;
       }
 
-      const res = await fetch(`${API_BASE_URL}/auth/user-info`, {
+      const res = await fetch(`${API_BASE_URL}/api/auth/user-info`, {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
